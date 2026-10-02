@@ -1,0 +1,6 @@
+bin/
+obj/
+.vs/
+*.user
+src/ControllerLabPro/models/*.onnx
+!src/ControllerLabPro/models/README.md

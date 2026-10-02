@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/ControllerLabPro/ControllerLabPro.csproj" />
+  <Project Path="tests/ControllerLabPro.SmokeTests/ControllerLabPro.SmokeTests.csproj" />
+</Solution>

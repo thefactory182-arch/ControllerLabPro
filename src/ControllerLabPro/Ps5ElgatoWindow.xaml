@@ -1,0 +1,71 @@
+<Window x:Class="ControllerLabPro.Ps5ElgatoWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="ControllerLab Pro — PS5 / Elgato" Width="1120" Height="760" MinWidth="900" MinHeight="620"
+        WindowStartupLocation="CenterOwner" Background="{StaticResource BgBrush}">
+    <Grid Margin="24">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+        <DockPanel Margin="0,0,0,18">
+            <StackPanel>
+                <TextBlock Text="PS5 / Elgato" FontSize="28" FontWeight="SemiBold"/>
+                <TextBlock Text="Separate console capture workspace — PC controller settings are unchanged" Foreground="{StaticResource MutedBrush}"/>
+            </StackPanel>
+            <Border DockPanel.Dock="Right" Background="#26314A" CornerRadius="12" Padding="12,6">
+                <TextBlock x:Name="CapturePill" Text="CAPTURE OFF" Foreground="#C9D2E8"/>
+            </Border>
+        </DockPanel>
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="340"/><ColumnDefinition Width="18"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <ScrollViewer>
+                <StackPanel>
+                    <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                        <StackPanel>
+                            <TextBlock Text="Elgato capture input" FontSize="19" FontWeight="SemiBold"/>
+                            <TextBlock Text="Video device" Margin="0,12,0,4"/>
+                            <ComboBox x:Name="DeviceBox"/>
+                            <Button Content="REFRESH DEVICES" Click="RefreshDevices" Background="#35415D"/>
+                            <TextBlock Text="Capture format" Margin="0,12,0,4"/>
+                            <ComboBox x:Name="FormatBox">
+                                <ComboBoxItem Content="1920 × 1080 • 60 FPS" Tag="1920,1080,60" IsSelected="True"/>
+                                <ComboBoxItem Content="1280 × 720 • 60 FPS" Tag="1280,720,60"/>
+                                <ComboBoxItem Content="3840 × 2160 • 30 FPS" Tag="3840,2160,30"/>
+                            </ComboBox>
+                            <CheckBox x:Name="PreviewGuides" Content="Show preview crosshair/FOV guides" IsChecked="True" Checked="GuideToggle" Unchecked="GuideToggle"/>
+                            <WrapPanel>
+                                <Button x:Name="StartButton" Content="START CAPTURE" Click="StartCapture"/>
+                                <Button x:Name="StopButton" Content="STOP" Click="StopCapture" Background="#B83B5E" IsEnabled="False"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                        <StackPanel>
+                            <TextBlock Text="Capture diagnostics" FontSize="19" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="DiagnosticsText" Text="Start capture to measure the feed." FontFamily="Cascadia Mono" Foreground="{StaticResource MutedBrush}" Margin="0,12,0,0" TextWrapping="Wrap"/>
+                            <TextBlock Text="Acquisition time measures PC-side frame delivery and copying, not total HDMI-to-controller latency. An exact end-to-end measurement requires an external flash/input test." Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,12,0,0"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <TextBlock Text="PS5 controller output" FontSize="19" FontWeight="SemiBold"/>
+                            <ComboBox IsEnabled="False" Margin="0,12,0,8"><ComboBoxItem Content="Not configured — capture/diagnostics only" IsSelected="True"/></ComboBox>
+                            <TextBlock Text="Zen LINK connects the Zen to PS5, but no documented real-time Windows input interface is currently configured. PS5 stick correction remains disabled; PC output is unaffected." Foreground="#FBBF24" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+            <Border Grid.Column="2" Style="{StaticResource Card}" Padding="12">
+                <Grid Background="#070B14">
+                    <Image x:Name="PreviewImage" Stretch="Uniform"/>
+                    <Viewbox x:Name="GuideLayer" Stretch="Uniform">
+                        <Canvas Width="1920" Height="1080" IsHitTestVisible="False">
+                            <Ellipse Width="420" Height="420" Canvas.Left="750" Canvas.Top="330" Stroke="#AA3B82F6" StrokeThickness="4"/>
+                            <Line X1="930" Y1="540" X2="990" Y2="540" Stroke="#DDFFFFFF" StrokeThickness="3"/>
+                            <Line X1="960" Y1="510" X2="960" Y2="570" Stroke="#DDFFFFFF" StrokeThickness="3"/>
+                        </Canvas>
+                    </Viewbox>
+                    <TextBlock x:Name="PreviewPlaceholder" Text="Elgato preview will appear here" Foreground="#71809F" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</Window>

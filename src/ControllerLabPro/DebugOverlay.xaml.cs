@@ -1,0 +1,7 @@
+using System.Windows;using System.Windows.Controls;using System.Windows.Media;using System.Windows.Shapes;using ControllerLabPro.Models;
+namespace ControllerLabPro;
+public partial class DebugOverlay:Window
+{
+ public DebugOverlay(){InitializeComponent();}
+ public void Render(System.Drawing.Rectangle screen,IReadOnlyList<Detection> ds,double fov,AimPoint aimPoint){Left=screen.Left;Top=screen.Top;Width=screen.Width;Height=screen.Height;Surface.Children.Clear();var ring=new Ellipse{Width=Math.Min(Width,Height)*fov*2,Height=Math.Min(Width,Height)*fov*2,Stroke=Brushes.DodgerBlue,StrokeThickness=2,Opacity=.75};Canvas.SetLeft(ring,(Width-ring.Width)/2);Canvas.SetTop(ring,(Height-ring.Height)/2);Surface.Children.Add(ring);foreach(var d in ds){var color=d.IsCurrentTarget?Brushes.OrangeRed:Brushes.Gold;var r=new Rectangle{Width=d.Box.Width,Height=d.Box.Height,Stroke=color,StrokeThickness=d.IsCurrentTarget?3:1.5};Canvas.SetLeft(r,d.Box.Left);Canvas.SetTop(r,d.Box.Top);Surface.Children.Add(r);var p=new Ellipse{Width=10,Height=10,Fill=color};Canvas.SetLeft(p,d.Target.X-5);Canvas.SetTop(p,d.Target.Y-5);Surface.Children.Add(p);var label=new TextBlock{Text=$"{(d.IsCurrentTarget?"TARGET • ":"")}{aimPoint} • {d.Confidence:P0}",Foreground=color,Background=new SolidColorBrush(Color.FromArgb(190,10,10,10)),Padding=new Thickness(4)};Canvas.SetLeft(label,d.Box.Left);Canvas.SetTop(label,Math.Max(0,d.Box.Top-24));Surface.Children.Add(label);}if(!IsVisible)Show();}
+}
