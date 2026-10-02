@@ -8,25 +8,27 @@ namespace ControllerLabPro.Vision;
 
 public static class DetectorFactory
 {
-    public const string BuiltinModel = "builtin:yolox-nano";
+    public const string BuiltinModel = "builtin:yolox-s";
+    public const string FastModel = "builtin:yolox-nano";
     public static string ResolvePath(string path) => Path.GetFullPath(path, AppContext.BaseDirectory);
-    public static bool IsBuiltin(string path) => string.IsNullOrWhiteSpace(path) || path == BuiltinModel ||
+    public static bool IsBuiltin(string path) => string.IsNullOrWhiteSpace(path) || (path == BuiltinModel || path == FastModel) ||
         (path.Replace('\\','/').Equals("models/yolov8n.onnx", StringComparison.OrdinalIgnoreCase) && !File.Exists(ResolvePath(path)));
-    public static IObjectDetector Create(string path) => IsBuiltin(path) ? new YoloXOnnxDetector() : new YoloOnnxDetector(ResolvePath(path));
+    public static IObjectDetector Create(string path) => IsBuiltin(path) ? new YoloXOnnxDetector(fast: path == FastModel) : new YoloOnnxDetector(ResolvePath(path));
 }
 
 // YOLOX preprocessing and grid decoding follow Megvii's Apache-2.0 reference.
 // See Models/YOLOX-LICENSE.txt and Models/README.md for upstream attribution.
 public sealed class YoloXOnnxDetector : IObjectDetector
 {
-    const int Size = 416;
+    readonly int Size;
+    readonly int _count;
     readonly InferenceSession _session;
     readonly string _input;
-    readonly float[] _buffer = new float[3 * Size * Size];
+    readonly float[] _buffer;
     readonly DenseTensor<float> _tensor;
-    public YoloXOnnxDetector(bool preferGpu = true)
+    public YoloXOnnxDetector(bool preferGpu = true, bool fast = false)
     {
-        using var stream = typeof(YoloXOnnxDetector).Assembly.GetManifestResourceStream("ControllerLabPro.Models.yolox_nano.onnx")
+        using var stream = typeof(YoloXOnnxDetector).Assembly.GetManifestResourceStream(fast ? "ControllerLabPro.Models.yolox_nano.onnx" : "ControllerLabPro.Models.yolox_s.onnx")
             ?? throw new InvalidOperationException("Included detector is missing from this build. Run setup-model.ps1 and rebuild.");
         using var memory = new MemoryStream(); stream.CopyTo(memory);
         var model = memory.ToArray();
@@ -38,6 +40,9 @@ public sealed class YoloXOnnxDetector : IObjectDetector
         }
         else _session = new InferenceSession(model, options);
         _input = _session.InputMetadata.Keys.Single();
+        Size = fast ? 416 : 640;
+        _count = new[]{8,16,32}.Sum(stride => (Size/stride)*(Size/stride));
+        _buffer = new float[3*Size*Size];
         if (!_session.InputMetadata[_input].Dimensions.SequenceEqual(new[]{1,3,Size,Size})) { _session.Dispose(); throw new InvalidDataException("Unexpected included model input dimensions."); }
         _tensor = new DenseTensor<float>(_buffer, [1,3,Size,Size]);
     }
@@ -66,7 +71,7 @@ public sealed class YoloXOnnxDetector : IObjectDetector
         finally { resized.UnlockBits(data); }
         using var output=_session.Run([NamedOnnxValue.CreateFromTensor(_input,_tensor)]);
         var values=output.First().AsTensor<float>();
-        if(!values.Dimensions.ToArray().SequenceEqual(new[]{1,3549,85})) throw new InvalidDataException("Unexpected included model output dimensions.");
+        if(!values.Dimensions.ToArray().SequenceEqual(new[]{1,_count,85})) throw new InvalidDataException("Unexpected included model output dimensions.");
         var candidates=new List<RawDetection>();var index=0;
         foreach(var stride in new[]{8,16,32})
         for(var y=0;y<Size/stride;y++) for(var x=0;x<Size/stride;x++,index++)

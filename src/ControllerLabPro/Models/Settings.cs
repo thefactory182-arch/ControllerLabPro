@@ -23,12 +23,12 @@ public sealed class VisionSettings
     public string Activation { get; set; }="L2";
     public string WindowTitleContains { get; set; }="";
     public string CaptureDisplay { get; set; }="";
-    public string ModelPath { get; set; }="builtin:yolox-nano";
+    public string ModelPath { get; set; }="builtin:yolox-s";
     public double DetectionConfidence { get; set; }=.55;
     public double FovRadius { get; set; }=.20;
-    public double AimStrength { get; set; }=.75;
-    public double Smoothing { get; set; }=.82;
-    public double MaxAimSpeed { get; set; }=.25;
+    public double AimStrength { get; set; }=.65;
+    public double Smoothing { get; set; }=.55;
+    public double MaxAimSpeed { get; set; }=.5225;
     public int LockMilliseconds { get; set; }=300;
     public int ReleaseAfterMissedFrames { get; set; }=3;
     public double ReleaseFovMultiplier { get; set; }=1.08;

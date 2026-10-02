@@ -10,6 +10,8 @@ var checks = new List<(string Name, Action Run)>
     ("Nearest-to-crosshair selection", TestNearestSelection),
     ("Maximum correction cap", TestCorrectionCap),
     ("Lost-target release", TestRelease),
+    ("Smoothness is consistent across frame rates", TestTimedSmoothing),
+    ("Visible-target correction converges in simulation", TestConvergence),
     ("Sensitivity preserves small input and clamps", TestStickPipeline),
     ("Jitter ADS gate, release and legacy strength cap", TestJitter),
     ("Included detector runs without external model", TestIncludedModel),
@@ -75,6 +77,38 @@ static void TestRelease()
     Assert(engine.CurrentTarget is null, "Target did not release after configured miss count");
 }
 
+static void TestTimedSmoothing()
+{
+    using var frame=new Bitmap(1000,1000);
+    using var detector=new FakeDetector([new(new RectangleF(650,400,100,200),.9f,"person")]);
+    var cfg=Config(AimPoint.CenterMass);cfg.Smoothing=.6;cfg.MaxAimSpeed=.6;
+    Stick Run(int rate)
+    {
+        var engine=new VisionAimEngine(detector,new ProportionalTargetPointEstimator());var result=new Stick();
+        for(var i=0;i<rate;i++)result=engine.Process(frame,cfg,1d/rate);
+        return result;
+    }
+    Assert(Math.Abs(Run(30).X-Run(120).X)<.00001,"Response depends on inference frame rate");
+    cfg.AimStrength=0;
+    var off=new VisionAimEngine(detector,new ProportionalTargetPointEstimator());
+    Assert(off.Process(frame,cfg,1d/60)==new Stick(),"Zero strength still moves the aim");
+}
+static void TestConvergence()
+{
+    using var frame=new Bitmap(1000,1000);using var detector=new FakeDetector([]);
+    var engine=new VisionAimEngine(detector,new ProportionalTargetPointEstimator());
+    var cfg=Config(AimPoint.CenterMass);cfg.AimStrength=.65;cfg.MaxAimSpeed=.5225;cfg.Smoothing=.55;
+    var error=150f;var maximum=0d;
+    for(var i=0;i<240;i++)
+    {
+        detector.Detections=[new(new RectangleF(450+error,400,100,200),.95f,"person")];
+        var correction=engine.Process(frame,cfg,1d/120);maximum=Math.Max(maximum,Math.Abs(correction.X));
+        error-=(float)(correction.X*650/120);
+    }
+    Assert(Math.Abs(error)<10,"Correction did not approach the selected point in the closed-loop simulation");
+    Assert(maximum>.15&&maximum<=cfg.MaxAimSpeed,"Default correction remained too weak or exceeded cap");
+}
+
 static void TestStickPipeline()
 {
     var cfg = new StickSettings { Sensitivity = 1 };
@@ -107,6 +141,7 @@ static void TestIncludedModel()
     using var blank=new Bitmap(416,416);using(var graphics=Graphics.FromImage(blank))graphics.Clear(Color.Black);
     Assert(detector.Detect(blank,.55f).Count==0,"Blank frame detected a person");
     using(var defaultDetector=DetectorFactory.Create(DetectorFactory.BuiltinModel)) Assert(defaultDetector.Detect(blank,.55f).Count==0,"Default detector initialization/inference failed");
+    using(var fast=DetectorFactory.Create(DetectorFactory.FastModel))Assert(fast.Detect(blank,.55f).Count==0,"Fast detector failed");
     var fixture=Environment.GetEnvironmentVariable("CONTROLLERLAB_PERSON_FIXTURE");
     if(!string.IsNullOrWhiteSpace(fixture))
     {
@@ -179,7 +214,11 @@ static void TestUi()
             Assert(main.Background is System.Windows.Media.SolidColorBrush bg && bg.Color.R<32,"Actual main window background is not dark");
             var flags=System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Instance;
             var type=typeof(ControllerLabPro.MainWindow);
-            void Invoke(string name,params object[] arguments)=>type.GetMethod(name,flags)!.Invoke(main,arguments);
+            void Invoke(string name,params object[] arguments)
+            {
+                type.GetMethod(name,flags)!.Invoke(main,arguments);
+                if(name=="OnInput")type.GetMethod("ProcessLatestInput",flags)!.Invoke(main,null);
+            }
             ((System.Windows.Controls.CheckBox)main.FindName("JitterEnabled")).IsChecked=true;
             ((System.Windows.Controls.CheckBox)main.FindName("TurboEnabled")).IsChecked=true;
             ((System.Windows.Controls.Slider)main.FindName("TurboHz")).Value=20;
@@ -200,6 +239,29 @@ static void TestUi()
             type.GetField("_processingEnabled",flags)!.SetValue(main,false);
             worker=new Thread(()=>Invoke("OnInput",raw));worker.Start();worker.Join();
             Assert((ControllerState)type.GetField("_latestCooked",flags)!.GetValue(main)! == raw,"Master-off did not pass raw input through");
+            type.GetField("_processingEnabled",flags)!.SetValue(main,true);
+            ((System.Windows.Controls.CheckBox)main.FindName("VisionEnabled")).IsChecked=true;
+            Invoke("ApplyControls");
+            type.GetProperty("_visionStick",flags)!.SetValue(main,new Stick(.3,-.2));
+            var still=new ControllerState(new(),new(),1,0,new());
+            worker=new Thread(()=>Invoke("OnInput",still));worker.Start();worker.Join();
+            var corrected=(ControllerState)type.GetField("_latestCooked",flags)!.GetValue(main)!;
+            Assert(corrected.Right==new Stick(.3,-.2),"Vision correction did not reach processed game output, or jitter competed with it");
+            var countBefore=(long)type.GetField("_outputReports",flags)!.GetValue(main)!;
+            Invoke("ProcessLatestInput");
+            Assert((long)type.GetField("_outputReports",flags)!.GetValue(main)! == countBefore+1,"Output waited for new HID input instead of resubmitting correction");
+            worker=new Thread(()=>Invoke("OnInput",still with {L2=0}));worker.Start();worker.Join();
+            Assert(((ControllerState)type.GetField("_latestCooked",flags)!.GetValue(main)!).Right==new Stick(),"Vision output continued after L2 release");
+            var correctionField=type.GetField("_correction",flags)!;
+            correctionField.SetValue(main,Activator.CreateInstance(correctionField.FieldType,new object[]{new Stick(.4,.4),0L}));
+            worker=new Thread(()=>Invoke("OnInput",still));worker.Start();worker.Join();
+            Assert(((ControllerState)type.GetField("_latestCooked",flags)!.GetValue(main)!).Right==new Stick(),"Stale vision correction kept moving the aim");
+            type.GetField("_lastInputTicks",flags)!.SetValue(main,0L);Invoke("ProcessLatestInput");
+            var neutral=(ControllerState)type.GetField("_latestCooked",flags)!.GetValue(main)!;
+            Assert(neutral.L2==0&&neutral.Buttons.Count==0&&neutral.Right==new Stick(),"Lost input did not clear held controls");
+            ((System.Windows.Controls.CheckBox)main.FindName("VisionEnabled")).IsChecked=false;Invoke("ApplyControls");
+            Assert(main.FindName("MaxAimSpeed") is null&&main.FindName("LockMilliseconds") is null,"Obsolete movement controls remain");
+            Assert(!((System.Windows.Controls.Expander)main.FindName("AdvancedVision")).IsExpanded,"Advanced detection controls are not collapsed");
             Invoke("StopController");Invoke("StopController");
             Assert(((System.Windows.Controls.Button)main.FindName("ControllerButton")).Content.ToString()=="START CONTROLLER","Stop did not restore button");
             Assert(type.GetField("_last",flags)!.GetValue(main) is null,"Stop retained stale input");

@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.Diagnostics;
 using ControllerLabPro.Models;
 
 namespace ControllerLabPro.Vision;
@@ -10,12 +11,16 @@ public sealed class VisionAimEngine(IObjectDetector detector, ITargetPointEstima
     int _missedFrames;
     int _nextId;
     Stick _smoothed;
+    long _previousFrame;
 
     public IReadOnlyList<Detection> LastDetections { get; private set; } = [];
     public Detection? CurrentTarget { get; private set; }
 
-    public Stick Process(Bitmap frame, VisionSettings cfg)
+    public Stick Process(Bitmap frame, VisionSettings cfg, double? elapsedSeconds = null)
     {
+        var now = Stopwatch.GetTimestamp();
+        var dt = elapsedSeconds ?? (_previousFrame == 0 ? 1d/60 : (now-_previousFrame)/(double)Stopwatch.Frequency);
+        _previousFrame = now;
         var center = new PointF(frame.Width / 2f, frame.Height / 2f);
         var radius = (float)(Math.Min(frame.Width, frame.Height) * cfg.FovRadius);
         var cropRect = Rectangle.Round(new RectangleF(center.X - radius, center.Y - radius, radius * 2, radius * 2));
@@ -67,9 +72,11 @@ public sealed class VisionAimEngine(IObjectDetector detector, ITargetPointEstima
         LastDetections = candidates.Select(d => d.Id == target.Id ? CurrentTarget : d).ToList();
 
         var desired = new Stick(
-            Math.Clamp((target.Target.X - center.X) / radius * cfg.AimStrength, -cfg.MaxAimSpeed, cfg.MaxAimSpeed),
-            Math.Clamp((target.Target.Y - center.Y) / radius * cfg.AimStrength, -cfg.MaxAimSpeed, cfg.MaxAimSpeed));
-        var alpha = Math.Clamp(1 - cfg.Smoothing, .01, 1);
+            Math.Clamp((target.Target.X - center.X) / radius * cfg.AimStrength * 1.8, -cfg.MaxAimSpeed, cfg.MaxAimSpeed),
+            Math.Clamp((target.Target.Y - center.Y) / radius * cfg.AimStrength * 1.8, -cfg.MaxAimSpeed, cfg.MaxAimSpeed));
+        // Strength controls correction; smoothness controls response time, independent of FPS.
+        var responseSeconds = .02 + Math.Clamp(cfg.Smoothing,0,1) * .28;
+        var alpha = cfg.Smoothing <= 0 ? 1 : 1-Math.Exp(-Math.Clamp(dt,.001,.25)/responseSeconds);
         _smoothed = new Stick(_smoothed.X + (desired.X - _smoothed.X) * alpha, _smoothed.Y + (desired.Y - _smoothed.Y) * alpha);
         return _smoothed;
     }
@@ -81,6 +88,7 @@ public sealed class VisionAimEngine(IObjectDetector detector, ITargetPointEstima
         _missedFrames = 0;
         LastDetections = [];
         _smoothed = new();
+        _previousFrame = 0;
     }
 
     Stick EaseToZero(double smoothing)

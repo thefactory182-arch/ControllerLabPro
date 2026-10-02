@@ -83,3 +83,15 @@ Jitter is a small right-stick oscillation only while L2 exceeds 35%. Release L2 
 Vision now includes the official Apache-2.0 YOLOX Nano detector inside the executable. Select USE INCLUDED DETECTOR, enable Vision, select your game display, then APPLY / RESTART VISION and hold L2. The previous missing `models/yolov8n.onnx` default automatically falls back to the included detector. Custom YOLOv8 models are optional, with relative custom paths resolved against the executable directory. Profiles load without control events overwriting their saved settings.
 
 Validation: 12/12 checks, including jitter activation/release and legacy limits, deadzone removal, embedded-model loading, and genuine inference on a sample containing people. Physical game behavior still requires target-PC testing. Included model origin, pinned SHA-256 and license are documented in `src/ControllerLabPro/Models/README.md` and `YOLOX-LICENSE.txt`.
+
+## Version 1.0.3
+
+Vision has two primary movement controls: Strength and Smoothness. Confidence and detection radius are collapsed under Advanced. Strength sets correction gain and speed cap; smoothness sets a time-based response (20-300 ms time constant), so it behaves consistently across inference frame rates. It eases toward a visible aim point while L2 is held; this does not guarantee a snap or a human-looking motion in every game.
+
+Virtual Xbox output is submitted every 8 ms independently of physical HID reports and model processing. The panel shows the actual processed right-stick values and output report count. Releasing L2 immediately gates vision off; stale corrections expire after 250 ms and stale physical input produces a neutral report after 500 ms. No app deadzone processing has been added. Your game's right-stick deadzone can ignore small corrections. Select the app's virtual controller; Xbox prompts alone do not conclusively identify which controller source a game uses.
+
+YOLOX-S is included as the stronger default ONNX detector. YOLOX Nano remains a faster included option, and compatible custom YOLOv8 ONNX files remain supported. Both included models are official exports, hash verified and embedded. The model selector must be followed by Apply / Restart Vision to load a different model.
+
+Jitter is experimental oscillation with no verified Call of Duty aim-assist improvement. It is suppressed whenever Vision is enabled to avoid competing movement. The app only sees visible screen pixels: it cannot draw accurate boxes around people hidden behind walls or distinguish enemy/friendly allegiance. A red box indicates target selection, not confirmed game movement.
+
+Validation: 14/14 checks, including genuine inference on both included model families, FPS-independent smoothing, correction-to-controller pipeline, repeat output without new HID reports, immediate L2 release, stale-input/correction cleanup and a closed-loop aiming simulation. Actual Call of Duty motion has not been verified on target hardware.
