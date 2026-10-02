@@ -4,3 +4,6 @@ obj/
 *.user
 src/ControllerLabPro/models/*.onnx
 !src/ControllerLabPro/models/README.md
+
+src/ControllerLabPro/Models/*.onnx
+artifacts/

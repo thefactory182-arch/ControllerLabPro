@@ -1,6 +1,8 @@
 # Vision model notes
 
-The default `YoloOnnxDetector` expects a YOLOv8 detection export with COCO class 0 representing `person` and output shaped `[1, attributes, detections]`. Export at 640×640 without built-in NMS.
+The included default is YOLOX Nano, embedded in the executable. It uses 416×416 letterboxed BGR input and YOLOX grid decoding; person is COCO class 0. `setup-model.ps1` verifies the pinned official model. See Models/README.md for source and Apache-2.0 license.
+
+The optional custom `YoloOnnxDetector` expects a YOLOv8 detection export with COCO class 0 representing `person` and output shaped `[1, attributes, detections]`. Export at 640×640 without built-in NMS.
 
 Vision Aim intentionally does not train or infer friendly-versus-hostile allegiance. A generic person or head detector cannot make that distinction reliably. The local FOV and hold-to-activate behavior reduce unintended selection, but the user is responsible for where the crosshair is placed.
 

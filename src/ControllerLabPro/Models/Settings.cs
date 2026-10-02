@@ -13,8 +13,8 @@ public sealed class AppSettings
     public static AppSettings Load(string path) => File.Exists(path) ? JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(path)) ?? new() : new();
     public void Save(string path) { Directory.CreateDirectory(Path.GetDirectoryName(path)!); File.WriteAllText(path, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true })); }
 }
-public sealed class StickSettings { public double LeftDeadzone { get; set; }=.08; public double RightDeadzone { get; set; }=.06; public double Sensitivity { get; set; }=1; public double AntiDeadzone { get; set; }=.02; }
-public sealed class JitterSettings { public bool Enabled { get; set; } public JitterPattern Pattern { get; set; }=JitterPattern.Circle; public double Horizontal { get; set; }=.05; public double Vertical { get; set; }=.04; public double FrequencyHz { get; set; }=8; }
+public sealed class StickSettings { public double Sensitivity { get; set; }=1; }
+public sealed class JitterSettings { public bool Enabled { get; set; } public JitterPattern Pattern { get; set; }=JitterPattern.Circle; public double Horizontal { get; set; }=.005; public double Vertical { get; set; }=.005; public double FrequencyHz { get; set; }=8; }
 public sealed class TurboSettings { public bool Enabled { get; set; } public string Button { get; set; }="A"; public double FrequencyHz { get; set; }=10; }
 public sealed class VisionSettings
 {
@@ -23,7 +23,7 @@ public sealed class VisionSettings
     public string Activation { get; set; }="L2";
     public string WindowTitleContains { get; set; }="";
     public string CaptureDisplay { get; set; }="";
-    public string ModelPath { get; set; }="models/yolov8n.onnx";
+    public string ModelPath { get; set; }="builtin:yolox-nano";
     public double DetectionConfidence { get; set; }=.55;
     public double FovRadius { get; set; }=.20;
     public double AimStrength { get; set; }=.75;

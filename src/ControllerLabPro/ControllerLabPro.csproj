@@ -12,11 +12,13 @@
     <ApplicationIcon>Assets\ControllerLabPro.ico</ApplicationIcon>
     <Product>ControllerLab Pro</Product>
     <Description>Offline controller processing and local vision-assist laboratory.</Description>
-    <Version>1.0.1</Version>
-    <FileVersion>1.0.1.0</FileVersion>
-    <AssemblyVersion>1.0.1.0</AssemblyVersion>
+    <Version>1.0.2</Version>
+    <FileVersion>1.0.2.0</FileVersion>
+    <AssemblyVersion>1.0.2.0</AssemblyVersion>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="Models/yolox_nano.onnx" />
+    <EmbeddedResource Include="Models/YOLOX-LICENSE.txt" />
     <PackageReference Include="HidSharp" Version="2.1.0" />
     <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.23.0" />
     <PackageReference Include="Nefarius.ViGEm.Client" Version="1.21.256" />

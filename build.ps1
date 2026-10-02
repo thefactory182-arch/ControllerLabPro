@@ -1,6 +1,7 @@
 param([switch]$SkipPublish)
 $ErrorActionPreference = 'Stop'
 $projectRoot = $PSScriptRoot
+& (Join-Path $projectRoot "setup-model.ps1")
 dotnet restore (Join-Path $projectRoot 'ControllerLabPro.slnx')
 dotnet build (Join-Path $projectRoot 'ControllerLabPro.slnx') -c Release --no-restore
 if (-not $SkipPublish) {

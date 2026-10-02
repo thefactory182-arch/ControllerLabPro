@@ -1,6 +1,6 @@
 # ControllerLab Pro
 
-ControllerLab Pro is a Windows controller-processing app intended **only for offline and story-mode games**. It reads a DualSense, applies stick tuning, jitter, turbo and button remaps, and sends the result to a virtual Xbox 360 controller. Its optional Vision Aim page applies a bounded right-stick correction only while L2 is held.
+ControllerLab Pro is a Windows controller-processing app intended **only for offline and story-mode games**. It reads a DualSense, applies sensitivity, L2-only low-strength jitter, turbo and button remaps, and sends the result to a virtual Xbox 360 controller. Its optional Vision Aim page applies a bounded right-stick correction only while L2 is held.
 
 ## Vision Aim behavior
 
@@ -25,11 +25,12 @@ Requirements:
 1. Windows 10/11 x64. The .NET 10 SDK is needed only to build from source; the released executable is self-contained.
 2. ViGEmBus installed for virtual Xbox output. On first launch, ControllerLab Pro checks for it and can download the official 1.22.0 installer, validate its SHA-256 checksum, and install it after Windows administrator approval.
 3. A USB or Bluetooth DualSense controller.
-4. A YOLOv8-style ONNX person model. Put `yolov8n.onnx` at `src/ControllerLabPro/models/yolov8n.onnx` or choose its path on Vision Aim.
+4. No separate model is required for the released executable: YOLOX Nano is embedded. Custom YOLOv8 ONNX models remain optional. Building from source runs `setup-model.ps1` to download and verify the official model before embedding it.
 
 Run `build.ps1` from PowerShell. It restores packages, builds Release, and publishes a self-contained Windows x64 app to `artifacts/publish`. Use `build.ps1 -SkipPublish` for a quicker build verification.
 
 ```powershell
+.\setup-model.ps1
 dotnet restore .\ControllerLabPro.slnx
 dotnet build .\ControllerLabPro.slnx -c Release
 dotnet publish .\src\ControllerLabPro\ControllerLabPro.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o .\artifacts\publish
@@ -37,7 +38,7 @@ dotnet publish .\src\ControllerLabPro\ControllerLabPro.csproj -c Release -r win-
 
 ## Pluggable detector and localization
 
-`IObjectDetector` is the detector boundary; `YoloOnnxDetector` is the default ONNX implementation. `ITargetPointEstimator` is the localization boundary. The included `ProportionalTargetPointEstimator` estimates head, upper-torso, and center-mass points from the person box. A lightweight pose/keypoint implementation can replace it without changing capture, FOV selection, lock, smoothing, or controller output logic.
+`IObjectDetector` is the detector boundary; `YoloXOnnxDetector` is the included default; `YoloOnnxDetector` supports optional custom YOLOv8 exports. `ITargetPointEstimator` is the localization boundary. The included `ProportionalTargetPointEstimator` estimates head, upper-torso, and center-mass points from the person box. A lightweight pose/keypoint implementation can replace it without changing capture, FOV selection, lock, smoothing, or controller output logic.
 
 Profiles are JSON files under `%LOCALAPPDATA%\ControllerLabPro\Profiles`. Frames are processed locally and are not saved.
 
@@ -59,7 +60,7 @@ Run the repeatable checks with:
 dotnet run --project .\tests\ControllerLabPro.SmokeTests\ControllerLabPro.SmokeTests.csproj -c Release
 ```
 
-The checks cover all three aim points, nearest-target selection, maximum correction speed, lost-target release, stick deadzone/clamping, construction of both WPF windows, dark-theme resources, and the visible Head/Body choices. Physical DualSense, ViGEmBus, Elgato, and model-inference timing still require the respective hardware and ONNX model on the target PC.
+The checks cover all three aim points, nearest-target selection, maximum correction speed, lost-target release, sensitivity/clamping, construction of both WPF windows, dark-theme resources, and the visible Head/Body choices. Physical DualSense, ViGEmBus, Elgato, and model-inference timing still require the respective hardware and ONNX model on the target PC.
 
 ## Version 1.0.1 fixes
 
@@ -72,3 +73,13 @@ The checks cover all three aim points, nearest-target selection, maximum correct
 - Main-window background and selected navigation rows use explicit dark colors. Regression screenshots now use the actual window background.
 
 Validation: Release build with zero warnings/errors; 10/10 regression checks (including USB/Bluetooth fixtures, background-thread processing, monitor refresh, bypass/stop, display persistence and actual WPF backgrounds). Physical controller/ViGEmBus, in-game output, real-model inference and Elgato still need hardware validation.
+
+## Version 1.0.2
+
+Deadzone and anti-deadzone controls and processing have been removed, including from legacy profiles; configure deadzones inside your game. Sensitivity remains a simple gain.
+
+Jitter is a small right-stick oscillation only while L2 exceeds 35%. Release L2 to stop immediately. Default horizontal/vertical strength is 0.5%; maximum is 3% (legacy values are clamped too). The old 30% maximum caused pronounced camera shaking. Even small oscillations can remain visible at high game sensitivity; this is not a guarantee of aim improvement.
+
+Vision now includes the official Apache-2.0 YOLOX Nano detector inside the executable. Select USE INCLUDED DETECTOR, enable Vision, select your game display, then APPLY / RESTART VISION and hold L2. The previous missing `models/yolov8n.onnx` default automatically falls back to the included detector. Custom YOLOv8 models are optional, with relative custom paths resolved against the executable directory. Profiles load without control events overwriting their saved settings.
+
+Validation: 12/12 checks, including jitter activation/release and legacy limits, deadzone removal, embedded-model loading, and genuine inference on a sample containing people. Physical game behavior still requires target-PC testing. Included model origin, pinned SHA-256 and license are documented in `src/ControllerLabPro/Models/README.md` and `YOLOX-LICENSE.txt`.

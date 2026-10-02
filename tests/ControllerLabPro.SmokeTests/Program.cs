@@ -10,7 +10,9 @@ var checks = new List<(string Name, Action Run)>
     ("Nearest-to-crosshair selection", TestNearestSelection),
     ("Maximum correction cap", TestCorrectionCap),
     ("Lost-target release", TestRelease),
-    ("Stick deadzone and clamp", TestStickPipeline),
+    ("Sensitivity preserves small input and clamps", TestStickPipeline),
+    ("Jitter ADS gate, release and legacy strength cap", TestJitter),
+    ("Included detector runs without external model", TestIncludedModel),
     ("USB / Bluetooth reports and all gamepad buttons", TestReports),
     ("Malformed reports are ignored", TestMalformedReports),
     ("Release clears accumulated correction", TestCorrectionReset),
@@ -75,10 +77,44 @@ static void TestRelease()
 
 static void TestStickPipeline()
 {
-    var cfg = new StickSettings { RightDeadzone = .1, Sensitivity = 2, AntiDeadzone = 0 };
-    Assert(ControllerPipeline.Tune(new Stick(.05, .05), cfg) == new Stick(0, 0), "Deadzone failed");
-    var tuned = ControllerPipeline.Tune(new Stick(1, 1), cfg);
-    Assert(Math.Abs(tuned.X) <= 1 && Math.Abs(tuned.Y) <= 1, "Stick output was not clamped");
+    var cfg = new StickSettings { Sensitivity = 1 };
+    Assert(ControllerPipeline.Tune(new Stick(.005,-.005),cfg)==new Stick(.005,-.005),"Small input was changed by a deadzone");
+    cfg.Sensitivity=2;
+    Assert(ControllerPipeline.Tune(new Stick(.5,-.25),cfg)==new Stick(1,-.5),"Sensitivity failed");
+    Assert(ControllerPipeline.Tune(new Stick(1,-1),cfg)==new Stick(1,-1),"Output was not clamped");
+}
+
+static void TestJitter()
+{
+    var raw=new Stick(.2,-.1);
+    var cfg=new JitterSettings{Enabled=true,Horizontal=.3,Vertical=.3,FrequencyHz=10};
+    foreach(var pattern in Enum.GetValues<JitterPattern>())
+    {
+        cfg.Pattern=pattern;
+        Assert(ControllerPipeline.AddJitter(raw,cfg,.01,false)==raw,"Jitter ran with L2 released");
+        for(var i=0;i<100;i++){var result=ControllerPipeline.AddJitter(raw,cfg,i/1000d,true);Assert(Math.Abs(result.X-raw.X)<=.030001&&Math.Abs(result.Y-raw.Y)<=.030001,"Legacy jitter strength exceeded 3% cap");}
+        Assert(ControllerPipeline.AddJitter(raw,cfg,.02,false)==raw,"Jitter persisted after ADS release");
+    }
+    cfg.Enabled=false;
+    Assert(ControllerPipeline.AddJitter(raw,cfg,0,true)==raw,"Disabled jitter ran");
+    var legacy=System.Text.Json.JsonSerializer.Deserialize<AppSettings>("{\"Sticks\":{\"RightDeadzone\":0.3,\"AntiDeadzone\":0.2,\"Sensitivity\":1}}")!;
+    Assert(ControllerPipeline.Tune(new(.01,.01),legacy.Sticks)==new Stick(.01,.01),"Legacy profile restored deadzone behavior");
+}
+static void TestIncludedModel()
+{
+    Assert(DetectorFactory.IsBuiltin("models/yolov8n.onnx"),"Legacy default did not migrate to included model");
+    using var detector=new YoloXOnnxDetector(preferGpu:false);
+    using var blank=new Bitmap(416,416);using(var graphics=Graphics.FromImage(blank))graphics.Clear(Color.Black);
+    Assert(detector.Detect(blank,.55f).Count==0,"Blank frame detected a person");
+    using(var defaultDetector=DetectorFactory.Create(DetectorFactory.BuiltinModel)) Assert(defaultDetector.Detect(blank,.55f).Count==0,"Default detector initialization/inference failed");
+    var fixture=Environment.GetEnvironmentVariable("CONTROLLERLAB_PERSON_FIXTURE");
+    if(!string.IsNullOrWhiteSpace(fixture))
+    {
+        using var image=new Bitmap(fixture);
+        var detections=detector.Detect(image,.35f);
+        Assert(detections.Count>0,"Included detector found no people in the real-image fixture");
+        Console.WriteLine($"Included detector found {detections.Count} people, highest confidence {detections.Max(d=>d.Confidence):P0}");
+    }
 }
 
 static void TestReports()
@@ -139,6 +175,7 @@ static void TestUi()
             var app = new ControllerLabPro.App();
             app.InitializeComponent();
             var main = new ControllerLabPro.MainWindow();
+            Assert(main.FindName("Deadzone") is null&&main.FindName("AntiDeadzone") is null,"Deadzone UI remains");
             Assert(main.Background is System.Windows.Media.SolidColorBrush bg && bg.Color.R<32,"Actual main window background is not dark");
             var flags=System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Instance;
             var type=typeof(ControllerLabPro.MainWindow);
@@ -155,8 +192,11 @@ static void TestUi()
             var worker=new Thread(()=>{try{Invoke("OnInput",raw);}catch(Exception ex){inputFailure=ex;}});
             worker.Start();worker.Join();
             Assert(inputFailure is null,"Background controller processing accessed WPF: "+inputFailure);
+            var released=raw with {L2=0};
+            worker=new Thread(()=>Invoke("OnInput",released));worker.Start();worker.Join();
+            Assert(((ControllerState)type.GetField("_latestCooked",flags)!.GetValue(main)!).Right==released.Right,"UI pipeline added jitter without ADS");
             Invoke("RefreshMonitor");
-            Assert(((System.Windows.Controls.TextBlock)main.FindName("MonitorText")).Text.Contains("DualSense reports: 1"),"Live controller did not update");
+            Assert(((System.Windows.Controls.TextBlock)main.FindName("MonitorText")).Text.Contains("DualSense reports: 2"),"Live controller did not update");
             type.GetField("_processingEnabled",flags)!.SetValue(main,false);
             worker=new Thread(()=>Invoke("OnInput",raw));worker.Start();worker.Join();
             Assert((ControllerState)type.GetField("_latestCooked",flags)!.GetValue(main)! == raw,"Master-off did not pass raw input through");

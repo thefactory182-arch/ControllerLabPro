@@ -17,6 +17,7 @@ ControllerState? _last;
  readonly object _visionGate=new();
  readonly System.Windows.Threading.DispatcherTimer _monitorTimer=new(){Interval=TimeSpan.FromMilliseconds(33)};
  volatile bool _controllerRunning, _processingEnabled=true;
+ bool _populating;
  AppSettings _runtimeCfg=new();
  ControllerState? _latestCooked;
  long _reportCount;
@@ -83,7 +84,7 @@ ControllerState? _last;
   var cfg=Volatile.Read(ref _runtimeCfg);
   Volatile.Write(ref _last,raw);Interlocked.Increment(ref _reportCount);
   var right=ControllerPipeline.Tune(raw.Right,cfg.Sticks);
-  right=ControllerPipeline.AddJitter(right,cfg.Jitter,_clock.Elapsed.TotalSeconds);
+  right=ControllerPipeline.AddJitter(right,cfg.Jitter,_clock.Elapsed.TotalSeconds,raw.L2>.35);
   var active=!cfg.Vision.RequireActivation||raw.L2>.35;
   if(cfg.Vision.Enabled&&active&&_processingEnabled){var correction=_visionStick;right=new Stick(right.X+correction.X,right.Y+correction.Y).Clamp();}
   var buttons=new HashSet<string>();
@@ -125,7 +126,7 @@ ControllerState? _last;
     }
     await Dispatcher.InvokeAsync(()=>{
      if(ct.IsCancellationRequested)return;
-     VisionText.Text=$"Display {cfg.CaptureDisplay}\nCapture / inference {sw.ElapsedMilliseconds} ms\nActivation {(active?"HELD":!_controllerRunning?"start controller first":!_processingEnabled?"processing disabled":"hold L2 to activate")}\nAim point {cfg.AimPoint}\nCandidates {detections.Count}\nTarget {(target is null?"none":$"{target.Confidence:P0} confidence")}\nAim Δ {correction.X:F3}, {correction.Y:F3}";
+     VisionText.Text=$"Detector { (DetectorFactory.IsBuiltin(cfg.ModelPath)?"included YOLOX Nano":"custom YOLOv8") }\nDisplay {cfg.CaptureDisplay}\nCapture / inference {sw.ElapsedMilliseconds} ms\nActivation {(active?"HELD":!_controllerRunning?"start controller first":!_processingEnabled?"processing disabled":"hold L2 to activate")}\nAim point {cfg.AimPoint}\nCandidates {detections.Count}\nTarget {(target is null?"none":$"{target.Confidence:P0} confidence")}\nAim Δ {correction.X:F3}, {correction.Y:F3}";
      if(cfg.DebugOverlay&&active){_overlay??=new DebugOverlay();_overlay.Render(captured.Value.ScreenRect,detections,cfg.FovRadius,cfg.AimPoint);}else _overlay?.Hide();
     });
     await Task.Delay(10,ct);
@@ -139,6 +140,7 @@ ControllerState? _last;
    }
   }
  }
+ void UseIncludedModel(object s,RoutedEventArgs e){ModelPath.Text=DetectorFactory.BuiltinModel;ApplyControls();VisionText.Text="Included detector selected. Enable Vision and click Apply / Restart Vision.";}
  void BrowseModel(object s,RoutedEventArgs e)
  {
   var dialog=new Microsoft.Win32.OpenFileDialog{Title="Select YOLOv8 person detector",Filter="ONNX model (*.onnx)|*.onnx",CheckFileExists=true};
@@ -149,10 +151,10 @@ ControllerState? _last;
   ApplyControls();StopVision();
   if(!_cfg.Vision.Enabled)return;
   if(DisplayBox.SelectedItem is not CaptureDisplay){VisionText.Text="Select a connected display first.";VisionEnabled.IsChecked=false;return;}
-  if(!File.Exists(_cfg.Vision.ModelPath)){VisionText.Text="Person detector model missing. Choose a YOLOv8 ONNX model file. Current path: "+Path.GetFullPath(_cfg.Vision.ModelPath);VisionEnabled.IsChecked=false;return;}
+  if(!DetectorFactory.IsBuiltin(_cfg.Vision.ModelPath)&&!File.Exists(DetectorFactory.ResolvePath(_cfg.Vision.ModelPath))){VisionText.Text="Custom model not found. Click USE INCLUDED DETECTOR, or browse to an existing YOLOv8 ONNX file. Path: "+DetectorFactory.ResolvePath(_cfg.Vision.ModelPath);VisionEnabled.IsChecked=false;return;}
   try
   {
-   lock(_visionGate){_detector=new YoloOnnxDetector(_cfg.Vision.ModelPath);_vision=new(_detector,new ProportionalTargetPointEstimator());}
+   lock(_visionGate){_detector=DetectorFactory.Create(_cfg.Vision.ModelPath);_vision=new(_detector,new ProportionalTargetPointEstimator());}
    _visionCts=new();var token=_visionCts.Token;_=Task.Run(()=>VisionLoop(token));
    SafetyPill.Child=new TextBlock{Text="VISION AIM / HOLD L2",Foreground=System.Windows.Media.Brushes.Gold};
   }
@@ -165,16 +167,16 @@ ControllerState? _last;
   _overlay?.Hide();SafetyPill.Child=new TextBlock{Text="VISION SAFE / OFF",Foreground=System.Windows.Media.Brushes.LightGray};
  }
  void DisableVision(object s,RoutedEventArgs e){VisionEnabled.IsChecked=false;_cfg.Vision.Enabled=false;StopVision();}
- void VisionToggle(object s,RoutedEventArgs e){if(!IsLoaded)return;ApplyControls();if(!_cfg.Vision.Enabled)StopVision();else VisionText.Text="Select your display and model, then click Apply / Restart Vision.";}
- void OverlayToggle(object s,RoutedEventArgs e){if(!IsLoaded)return;ApplyControls();if(!_cfg.Vision.DebugOverlay)_overlay?.Hide();}
- void ApplyControls(){_cfg.ProfileName=ProfileName.Text;_cfg.Sticks.RightDeadzone=Deadzone.Value;_cfg.Sticks.Sensitivity=Sensitivity.Value;_cfg.Sticks.AntiDeadzone=AntiDeadzone.Value;_cfg.Jitter.Enabled=JitterEnabled.IsChecked==true;_cfg.Jitter.Pattern=Enum.Parse<JitterPattern>(((ComboBoxItem)JitterPatternBox.SelectedItem).Content.ToString()!);_cfg.Jitter.Horizontal=JitterX.Value;_cfg.Jitter.Vertical=JitterY.Value;_cfg.Jitter.FrequencyHz=JitterHz.Value;_cfg.Turbo.Enabled=TurboEnabled.IsChecked==true;_cfg.Turbo.Button=((ComboBoxItem)TurboButton.SelectedItem).Content.ToString()!;_cfg.Turbo.FrequencyHz=TurboHz.Value;_cfg.Vision.Enabled=VisionEnabled.IsChecked==true;_cfg.Vision.CaptureDisplay=(DisplayBox.SelectedItem as CaptureDisplay)?.DeviceName??"";_cfg.Vision.ModelPath=ModelPath.Text;var aimItem=(ComboBoxItem)AimPointBox.SelectedItem;_cfg.Vision.AimPoint=Enum.Parse<AimPoint>(aimItem.Tag?.ToString()??aimItem.Content.ToString()!);_cfg.Vision.DebugOverlay=DebugOverlay.IsChecked==true;_cfg.Vision.DetectionConfidence=DetectionConfidence.Value;_cfg.Vision.FovRadius=FovRadius.Value;_cfg.Vision.AimStrength=AimStrength.Value;_cfg.Vision.Smoothing=Smoothing.Value;_cfg.Vision.MaxAimSpeed=MaxAimSpeed.Value;_cfg.Vision.LockMilliseconds=(int)LockMilliseconds.Value;_cfg.Vision.ReleaseAfterMissedFrames=(int)ReleaseMisses.Value;Volatile.Write(ref _runtimeCfg,System.Text.Json.JsonSerializer.Deserialize<AppSettings>(System.Text.Json.JsonSerializer.Serialize(_cfg))!);}
- void Populate(){ProfileName.Text=_cfg.ProfileName;Deadzone.Value=_cfg.Sticks.RightDeadzone;Sensitivity.Value=_cfg.Sticks.Sensitivity;AntiDeadzone.Value=_cfg.Sticks.AntiDeadzone;JitterEnabled.IsChecked=_cfg.Jitter.Enabled;Select(JitterPatternBox,_cfg.Jitter.Pattern.ToString());JitterX.Value=_cfg.Jitter.Horizontal;JitterY.Value=_cfg.Jitter.Vertical;JitterHz.Value=_cfg.Jitter.FrequencyHz;TurboEnabled.IsChecked=_cfg.Turbo.Enabled;Select(TurboButton,_cfg.Turbo.Button);TurboHz.Value=_cfg.Turbo.FrequencyHz;VisionEnabled.IsChecked=_cfg.Vision.Enabled;DisplayBox.SelectedItem=WindowCapture.GetDisplays().FirstOrDefault(d=>d.DeviceName==_cfg.Vision.CaptureDisplay)??DisplayBox.Items.Cast<CaptureDisplay>().FirstOrDefault();ModelPath.Text=_cfg.Vision.ModelPath;Select(AimPointBox,_cfg.Vision.AimPoint.ToString());DebugOverlay.IsChecked=_cfg.Vision.DebugOverlay;DetectionConfidence.Value=_cfg.Vision.DetectionConfidence;FovRadius.Value=_cfg.Vision.FovRadius;AimStrength.Value=_cfg.Vision.AimStrength;Smoothing.Value=_cfg.Vision.Smoothing;MaxAimSpeed.Value=_cfg.Vision.MaxAimSpeed;LockMilliseconds.Value=_cfg.Vision.LockMilliseconds;ReleaseMisses.Value=_cfg.Vision.ReleaseAfterMissedFrames;RefreshLabels();}
+ void VisionToggle(object s,RoutedEventArgs e){if(!IsLoaded||_populating)return;ApplyControls();if(!_cfg.Vision.Enabled)StopVision();else VisionText.Text="Select your display and model, then click Apply / Restart Vision.";}
+ void OverlayToggle(object s,RoutedEventArgs e){if(!IsLoaded||_populating)return;ApplyControls();if(!_cfg.Vision.DebugOverlay)_overlay?.Hide();}
+ void ApplyControls(){_cfg.ProfileName=ProfileName.Text;_cfg.Sticks.Sensitivity=Sensitivity.Value;_cfg.Jitter.Enabled=JitterEnabled.IsChecked==true;_cfg.Jitter.Pattern=Enum.Parse<JitterPattern>(((ComboBoxItem)JitterPatternBox.SelectedItem).Content.ToString()!);_cfg.Jitter.Horizontal=JitterX.Value;_cfg.Jitter.Vertical=JitterY.Value;_cfg.Jitter.FrequencyHz=JitterHz.Value;_cfg.Turbo.Enabled=TurboEnabled.IsChecked==true;_cfg.Turbo.Button=((ComboBoxItem)TurboButton.SelectedItem).Content.ToString()!;_cfg.Turbo.FrequencyHz=TurboHz.Value;_cfg.Vision.Enabled=VisionEnabled.IsChecked==true;_cfg.Vision.CaptureDisplay=(DisplayBox.SelectedItem as CaptureDisplay)?.DeviceName??"";_cfg.Vision.ModelPath=ModelPath.Text;var aimItem=(ComboBoxItem)AimPointBox.SelectedItem;_cfg.Vision.AimPoint=Enum.Parse<AimPoint>(aimItem.Tag?.ToString()??aimItem.Content.ToString()!);_cfg.Vision.DebugOverlay=DebugOverlay.IsChecked==true;_cfg.Vision.DetectionConfidence=DetectionConfidence.Value;_cfg.Vision.FovRadius=FovRadius.Value;_cfg.Vision.AimStrength=AimStrength.Value;_cfg.Vision.Smoothing=Smoothing.Value;_cfg.Vision.MaxAimSpeed=MaxAimSpeed.Value;_cfg.Vision.LockMilliseconds=(int)LockMilliseconds.Value;_cfg.Vision.ReleaseAfterMissedFrames=(int)ReleaseMisses.Value;Volatile.Write(ref _runtimeCfg,System.Text.Json.JsonSerializer.Deserialize<AppSettings>(System.Text.Json.JsonSerializer.Serialize(_cfg))!);}
+ void Populate(){_populating=true;try{ProfileName.Text=_cfg.ProfileName;Sensitivity.Value=_cfg.Sticks.Sensitivity;JitterEnabled.IsChecked=_cfg.Jitter.Enabled;Select(JitterPatternBox,_cfg.Jitter.Pattern.ToString());JitterX.Value=_cfg.Jitter.Horizontal;JitterY.Value=_cfg.Jitter.Vertical;JitterHz.Value=_cfg.Jitter.FrequencyHz;TurboEnabled.IsChecked=_cfg.Turbo.Enabled;Select(TurboButton,_cfg.Turbo.Button);TurboHz.Value=_cfg.Turbo.FrequencyHz;VisionEnabled.IsChecked=_cfg.Vision.Enabled;DisplayBox.SelectedItem=WindowCapture.GetDisplays().FirstOrDefault(d=>d.DeviceName==_cfg.Vision.CaptureDisplay)??DisplayBox.Items.Cast<CaptureDisplay>().FirstOrDefault();ModelPath.Text=_cfg.Vision.ModelPath;Select(AimPointBox,_cfg.Vision.AimPoint.ToString());DebugOverlay.IsChecked=_cfg.Vision.DebugOverlay;DetectionConfidence.Value=_cfg.Vision.DetectionConfidence;FovRadius.Value=_cfg.Vision.FovRadius;AimStrength.Value=_cfg.Vision.AimStrength;Smoothing.Value=_cfg.Vision.Smoothing;MaxAimSpeed.Value=_cfg.Vision.MaxAimSpeed;LockMilliseconds.Value=_cfg.Vision.LockMilliseconds;ReleaseMisses.Value=_cfg.Vision.ReleaseAfterMissedFrames;RefreshLabels();}finally{_populating=false;}}
  static void Select(ComboBox box,string value){foreach(ComboBoxItem i in box.Items)i.IsSelected=string.Equals(i.Tag?.ToString()??i.Content?.ToString(),value,StringComparison.OrdinalIgnoreCase);}
  void SaveProfile(object s,RoutedEventArgs e){ApplyControls();_cfg.Save(Path.Combine(ProfileDir,SafeName(_cfg.ProfileName)+".json"));}
  void LoadProfile(object s,RoutedEventArgs e){var p=Path.Combine(ProfileDir,SafeName(ProfileName.Text)+".json");StopVision();_cfg=AppSettings.Load(p);Populate();ApplyControls();if(_cfg.Vision.Enabled)RestartVision(s,e);}
  static string SafeName(string s)=>string.Concat(s.Where(c=>char.IsLetterOrDigit(c)||c is '-' or '_')) is var v&&v.Length>0?v:"Default";
- void SettingsChanged(object s,RoutedEventArgs e){if(!IsLoaded)return;ApplyControls();RefreshLabels();}
- void RefreshLabels(){if(DeadzoneValue is null)return;DeadzoneValue.Text=$"{Deadzone.Value:P0}";SensitivityValue.Text=$"{Sensitivity.Value:F2}×";AntiDeadzoneValue.Text=$"{AntiDeadzone.Value:P0}";JitterXValue.Text=$"{JitterX.Value:P0}";JitterYValue.Text=$"{JitterY.Value:P0}";JitterHzValue.Text=$"{JitterHz.Value:F0} Hz";}
+ void SettingsChanged(object s,RoutedEventArgs e){if(!IsLoaded||_populating)return;ApplyControls();RefreshLabels();}
+ void RefreshLabels(){if(SensitivityValue is null)return;SensitivityValue.Text=$"{Sensitivity.Value:F2}×";JitterXValue.Text=$"{JitterX.Value:P1}";JitterYValue.Text=$"{JitterY.Value:P1}";JitterHzValue.Text=$"{JitterHz.Value:F0} Hz";}
  void NavChanged(object s,SelectionChangedEventArgs e){if(!IsLoaded||Nav.SelectedItem is null)return;if(Nav.SelectedIndex==6){_ps5Window??=new Ps5ElgatoWindow{Owner=this};_ps5Window.Closed+=(_,_)=>_ps5Window=null;_ps5Window.Show();_ps5Window.Activate();Nav.SelectedIndex=0;return;}var pages=new[]{DashboardPage,SticksPage,TurboPage,VisionPage,MonitorPage,ProfilesPage};for(int i=0;i<pages.Length;i++)pages[i].Visibility=i==Nav.SelectedIndex?Visibility.Visible:Visibility.Collapsed;PageTitle.Text=((ListBoxItem)Nav.SelectedItem).Content.ToString();}
  void Shutdown(){_monitorTimer.Stop();StopVision();StopController();_input.Dispose();_output.Dispose();_overlay?.Close();_ps5Window?.Close();}
 }
