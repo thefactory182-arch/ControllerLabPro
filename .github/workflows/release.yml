@@ -1,0 +1,84 @@
+name: Build and publish Windows release
+on:
+  push:
+    branches: [main]
+    paths:
+      - src/ControllerLabPro/ControllerLabPro.csproj
+      - .github/workflows/release.yml
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: windows-release
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build and regression checks
+        shell: pwsh
+        run: |
+          dotnet restore ControllerLabPro.slnx
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          dotnet build ControllerLabPro.slnx -c Release --no-restore
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          dotnet run --project tests/ControllerLabPro.SmokeTests -c Release --no-build
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Package executable, source and checksums
+        shell: pwsh
+        run: |
+          dotnet publish src/ControllerLabPro/ControllerLabPro.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false -o artifacts/publish
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          git archive --format=zip --output=artifacts/ControllerLabPro-Source.zip HEAD
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Copy-Item artifacts/publish/ControllerLabPro.exe artifacts/ControllerLabPro.exe
+          $checksums = @('ControllerLabPro.exe', 'ControllerLabPro-Source.zip') | ForEach-Object {
+            $hash = (Get-FileHash (Join-Path artifacts $_) -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $_"
+          }
+          $checksums | Set-Content artifacts/SHA256SUMS.txt -Encoding utf8NoBOM
+      - name: Publish verified replacement and withdraw 1.0.0
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            const crypto = require('crypto');
+            const project = fs.readFileSync('src/ControllerLabPro/ControllerLabPro.csproj', 'utf8');
+            const version = project.match(/<Version>([^<]+)<\/Version>/)[1];
+            const tag = `v${version}`;
+            const params = {...context.repo};
+            const body = fs.readFileSync('docs/RELEASE_1.0.1.md', 'utf8');
+            let release;
+            try {
+              release = (await github.rest.repos.getReleaseByTag({...params, tag})).data;
+              if (!release.draft) throw new Error('Release already published; refusing to overwrite it.');
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              release = (await github.rest.repos.createRelease({...params, tag_name: tag, target_commitish: context.sha,
+                name: `ControllerLab Pro ${version}`, body, draft: true, prerelease: false})).data;
+            }
+            const assets = (await github.rest.repos.listReleaseAssets({...params, release_id: release.id})).data;
+            for (const name of ['ControllerLabPro.exe', 'ControllerLabPro-Source.zip', 'SHA256SUMS.txt']) {
+              const existing = assets.find(asset => asset.name === name);
+              if (existing) await github.rest.repos.deleteReleaseAsset({...params, asset_id: existing.id});
+              const data = fs.readFileSync(`artifacts/${name}`);
+              const uploaded = (await github.rest.repos.uploadReleaseAsset({...params, release_id: release.id, name, data,
+                headers: {'content-type': name.endsWith('.exe') ? 'application/octet-stream' : name.endsWith('.zip') ? 'application/zip' : 'text/plain'},
+                request: {timeout: 180000}})).data;
+              if (uploaded.size !== data.length || (uploaded.digest && uploaded.digest !== `sha256:${crypto.createHash('sha256').update(data).digest('hex')}`))
+                throw new Error(`Upload verification failed: ${name}`);
+            }
+            await github.rest.repos.updateRelease({...params, release_id: release.id, body, draft: false, make_latest: 'true'});
+            if (version === '1.0.1') {
+              try {
+                const old = (await github.rest.repos.getReleaseByTag({...params, tag: 'v1.0.0'})).data;
+                await github.rest.repos.updateRelease({...params, release_id: old.id, draft: true,
+                  name: 'ControllerLab Pro 1.0.0 — withdrawn', body: 'Withdrawn due to controller input and UI defects. Use v1.0.1.'});
+              } catch (error) { if (error.status !== 404) throw error; }
+            }
+            core.summary.addHeading(`Published ${tag}`).addLink('Download release', `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/tag/${tag}`).write();

@@ -4,7 +4,7 @@ ControllerLab Pro is a Windows controller-processing app intended **only for off
 
 ## Vision Aim behavior
 
-The vision loop captures the selected game window, crops a configurable region around the screen crosshair, runs the configured YOLO-style ONNX person detector on that local crop, and considers only aim points inside the FOV circle. It selects the person aim point nearest the crosshair and smoothly corrects toward Head, Upper Torso, or Center Mass.
+The vision loop captures the selected display (including visible fullscreen borderless games), crops a configurable region around the screen crosshair, runs the configured YOLO-style ONNX person detector on that local crop, and considers only aim points inside the FOV circle. It selects the person aim point nearest the crosshair and smoothly corrects toward Head, Upper Torso, or Center Mass.
 
 Locking is matched geometrically between frames. A target releases when activation is released, it leaves the FOV, the lock duration expires, the configured number of frames are missed, the master switch is turned off, or capture/model processing fails. Corrections are capped by the maximum stick speed setting.
 
@@ -22,7 +22,7 @@ No anti-cheat bypass, process injection, concealment, game-memory reading, or on
 
 Requirements:
 
-1. Windows 10/11 x64 and the .NET 10 SDK.
+1. Windows 10/11 x64. The .NET 10 SDK is needed only to build from source; the released executable is self-contained.
 2. ViGEmBus installed for virtual Xbox output. On first launch, ControllerLab Pro checks for it and can download the official 1.22.0 installer, validate its SHA-256 checksum, and install it after Windows administrator approval.
 3. A USB or Bluetooth DualSense controller.
 4. A YOLOv8-style ONNX person model. Put `yolov8n.onnx` at `src/ControllerLabPro/models/yolov8n.onnx` or choose its path on Vision Aim.
@@ -60,3 +60,15 @@ dotnet run --project .\tests\ControllerLabPro.SmokeTests\ControllerLabPro.SmokeT
 ```
 
 The checks cover all three aim points, nearest-target selection, maximum correction speed, lost-target release, stick deadzone/clamping, construction of both WPF windows, dark-theme resources, and the visible Head/Body choices. Physical DualSense, ViGEmBus, Elgato, and model-inference timing still require the respective hardware and ONNX model on the target PC.
+
+## Version 1.0.1 fixes
+
+- Controller input processing runs without accessing WPF controls from the HID thread; the live monitor refreshes at 30 Hz without slowing controller output.
+- Start toggles to Stop, and Stop/disconnect clears input and releases the virtual controller. Start failures and lost-input errors include useful diagnostics.
+- USB, full Bluetooth, and basic Bluetooth DualSense reports are parsed separately; short read timeouts are retried. D-pad, shoulders, menu, stick-click and Guide buttons now reach the virtual output.
+- The physical input is explicitly labeled DualSense. The game output is a virtual Xbox 360 controller by design: select that controller in your game to use tuning, jitter, turbo, remaps and vision correction. If your game directly uses the physical DualSense, it bypasses the processed output. Close competing controller translators or configure your existing HidHide setup to allow ControllerLab Pro access.
+- Turbo controls apply immediately. Turning processing off passes raw input through rather than leaving stale held buttons in the game.
+- Vision captures a chosen monitor instead of requiring a window title. Select the display your game is visible on, enable Vision, browse to a YOLOv8 ONNX person model, then Apply / Restart Vision. Hold L2 with the controller running. No model is bundled; diagnostics explain missing models, capture failures, activation, candidate counts and correction values.
+- Main-window background and selected navigation rows use explicit dark colors. Regression screenshots now use the actual window background.
+
+Validation: Release build with zero warnings/errors; 10/10 regression checks (including USB/Bluetooth fixtures, background-thread processing, monitor refresh, bypass/stop, display persistence and actual WPF backgrounds). Physical controller/ViGEmBus, in-game output, real-model inference and Elgato still need hardware validation.

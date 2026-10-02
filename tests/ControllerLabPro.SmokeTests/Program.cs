@@ -11,7 +11,11 @@ var checks = new List<(string Name, Action Run)>
     ("Maximum correction cap", TestCorrectionCap),
     ("Lost-target release", TestRelease),
     ("Stick deadzone and clamp", TestStickPipeline),
-    ("Dark WPF windows and aim choices", TestUi)
+    ("USB / Bluetooth reports and all gamepad buttons", TestReports),
+    ("Malformed reports are ignored", TestMalformedReports),
+    ("Release clears accumulated correction", TestCorrectionReset),
+    ("Display enumeration and profile persistence", TestDisplays),
+    ("Dark WPF windows, worker input, bypass and stop", TestUi)
 };
 
 var failed = 0;
@@ -77,6 +81,54 @@ static void TestStickPipeline()
     Assert(Math.Abs(tuned.X) <= 1 && Math.Abs(tuned.Y) <= 1, "Stick output was not clamped");
 }
 
+static void TestReports()
+{
+    foreach(var kind in new[]{"USB","Bluetooth","Basic"})
+    {
+        var report=new byte[kind=="USB"?64:kind=="Bluetooth"?78:10];
+        report[0]=(byte)(kind=="Bluetooth"?0x31:0x01);
+        var offset=kind=="Bluetooth"?2:1;
+        report[offset]=0;report[offset+1]=255;report[offset+2]=255;report[offset+3]=0;
+        var face=kind=="Basic"?5:offset+7;
+        report[face]=0xF1;report[face+1]=0xF3;report[face+2]=1;
+        report[kind=="Basic"?8:offset+4]=255;report[kind=="Basic"?9:offset+5]=128;
+        Assert(DualSenseReader.TryParse(report,out var state),kind+" report rejected");
+        Assert(state!.Left==new Stick(-1,1)&&state.Right==new Stick(1,-1),kind+" axes incorrect");
+        Assert(state.L2==1&&Math.Abs(state.R2-128/255d)<.001,kind+" triggers incorrect");
+        Assert(state.Buttons.SetEquals(new[]{"A","B","X","Y","Up","Right","LB","RB","Back","Start","LS","RS","Guide"}),kind+" buttons incorrect");
+        report[face]=8;report[face+1]=0;report[face+2]=0;
+        DualSenseReader.TryParse(report,out state);
+        Assert(state!.Buttons.Count==0,kind+" released buttons remained held");
+    }
+}
+static void TestMalformedReports()
+{
+    Assert(!DualSenseReader.TryParse([],out _),"Empty report accepted");
+    Assert(!DualSenseReader.TryParse(new byte[]{0x31,0,0},out _),"Truncated Bluetooth accepted");
+    var unknown=new byte[78];unknown[0]=0x32;
+    Assert(!DualSenseReader.TryParse(unknown,out _),"Unknown report ID accepted");
+    using var reader=new DualSenseReader();reader.Disconnect();reader.Disconnect();
+}
+static void TestCorrectionReset()
+{
+    using var frame=new Bitmap(1000,1000);
+    using var detector=new FakeDetector([new(new RectangleF(650,400,100,200),.9f,"person")]);
+    var engine=new VisionAimEngine(detector,new ProportionalTargetPointEstimator());
+    var cfg=Config(AimPoint.CenterMass);cfg.Smoothing=.8;
+    Assert(engine.Process(frame,cfg).X>0,"No initial correction");
+    engine.Release();detector.Detections=[];
+    Assert(engine.Process(frame,cfg)==new Stick(),"Old correction persisted after release");
+}
+static void TestDisplays()
+{
+    var displays=WindowCapture.GetDisplays();
+    Assert(displays.Count>0&&displays.All(d=>d.Bounds.Width>0&&d.Bounds.Height>0),"No usable display found");
+    Assert(new WindowCapture().Capture("missing-display") is null,"Missing display silently captured a different monitor");
+    var path=Path.Combine(Path.GetTempPath(),Guid.NewGuid()+".json");
+    try{var cfg=new AppSettings();cfg.Vision.CaptureDisplay=displays[0].DeviceName;cfg.Save(path);Assert(AppSettings.Load(path).Vision.CaptureDisplay==displays[0].DeviceName,"Display choice did not persist");}
+    finally{File.Delete(path);}
+}
+
 static void TestUi()
 {
     Exception? failure = null;
@@ -87,6 +139,30 @@ static void TestUi()
             var app = new ControllerLabPro.App();
             app.InitializeComponent();
             var main = new ControllerLabPro.MainWindow();
+            Assert(main.Background is System.Windows.Media.SolidColorBrush bg && bg.Color.R<32,"Actual main window background is not dark");
+            var flags=System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Instance;
+            var type=typeof(ControllerLabPro.MainWindow);
+            void Invoke(string name,params object[] arguments)=>type.GetMethod(name,flags)!.Invoke(main,arguments);
+            ((System.Windows.Controls.CheckBox)main.FindName("JitterEnabled")).IsChecked=true;
+            ((System.Windows.Controls.CheckBox)main.FindName("TurboEnabled")).IsChecked=true;
+            ((System.Windows.Controls.Slider)main.FindName("TurboHz")).Value=20;
+            Invoke("ApplyControls");
+            var cfg=(AppSettings)type.GetField("_runtimeCfg",flags)!.GetValue(main)!;
+            Assert(cfg.Turbo.Enabled&&cfg.Turbo.FrequencyHz==20,"Turbo controls did not apply");
+            type.GetField("_controllerRunning",flags)!.SetValue(main,true);
+            var raw=new ControllerState(new(),new(.2,.1),1,0,new(){"LB","A"});
+            Exception? inputFailure=null;
+            var worker=new Thread(()=>{try{Invoke("OnInput",raw);}catch(Exception ex){inputFailure=ex;}});
+            worker.Start();worker.Join();
+            Assert(inputFailure is null,"Background controller processing accessed WPF: "+inputFailure);
+            Invoke("RefreshMonitor");
+            Assert(((System.Windows.Controls.TextBlock)main.FindName("MonitorText")).Text.Contains("DualSense reports: 1"),"Live controller did not update");
+            type.GetField("_processingEnabled",flags)!.SetValue(main,false);
+            worker=new Thread(()=>Invoke("OnInput",raw));worker.Start();worker.Join();
+            Assert((ControllerState)type.GetField("_latestCooked",flags)!.GetValue(main)! == raw,"Master-off did not pass raw input through");
+            Invoke("StopController");Invoke("StopController");
+            Assert(((System.Windows.Controls.Button)main.FindName("ControllerButton")).Content.ToString()=="START CONTROLLER","Stop did not restore button");
+            Assert(type.GetField("_last",flags)!.GetValue(main) is null,"Stop retained stale input");
             var aim = (System.Windows.Controls.ComboBox)main.FindName("AimPointBox");
             var choices = aim.Items.Cast<System.Windows.Controls.ComboBoxItem>().Select(x => x.Content?.ToString()).ToArray();
             Assert(choices.SequenceEqual(new[] { "Head", "Body — Upper Torso", "Body — Center Mass" }), "PC aim choices are not clear or complete");
@@ -119,8 +195,7 @@ static void TestUi()
 static void Render(System.Windows.Window window, string path, int width, int height)
 {
     var content = (System.Windows.FrameworkElement)window.Content;
-    if (content is System.Windows.Controls.Panel panel && panel.Background is null)
-        panel.Background = (System.Windows.Media.Brush)System.Windows.Application.Current.FindResource("BgBrush");
+    if (content is System.Windows.Controls.Panel panel) panel.Background = window.Background;
     content.Measure(new System.Windows.Size(width, height));
     content.Arrange(new System.Windows.Rect(0, 0, width, height));
     content.UpdateLayout();

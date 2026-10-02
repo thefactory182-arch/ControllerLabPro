@@ -80,6 +80,7 @@ public sealed class VisionAimEngine(IObjectDetector detector, ITargetPointEstima
         CurrentTarget = null;
         _missedFrames = 0;
         LastDetections = [];
+        _smoothed = new();
     }
 
     Stick EaseToZero(double smoothing)

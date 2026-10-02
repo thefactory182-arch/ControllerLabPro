@@ -22,6 +22,7 @@ public sealed class VisionSettings
     public bool RequireActivation { get; set; }=true;
     public string Activation { get; set; }="L2";
     public string WindowTitleContains { get; set; }="";
+    public string CaptureDisplay { get; set; }="";
     public string ModelPath { get; set; }="models/yolov8n.onnx";
     public double DetectionConfidence { get; set; }=.55;
     public double FovRadius { get; set; }=.20;
