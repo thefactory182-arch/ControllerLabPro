@@ -71,9 +71,13 @@ public sealed class VisionAimEngine(IObjectDetector detector, ITargetPointEstima
         CurrentTarget = target with { IsCurrentTarget = true };
         LastDetections = candidates.Select(d => d.Id == target.Id ? CurrentTarget : d).ToList();
 
+        // Keep the established default; reserve the upper slider range for stronger pull.
+        var strength = Math.Clamp(cfg.AimStrength, 0, 1);
+        var boost = Math.Max(0, (strength - .65) / .35);
+        var gain = strength * 1.8 + 6 * boost * boost;
         var desired = new Stick(
-            Math.Clamp((target.Target.X - center.X) / radius * cfg.AimStrength * 1.8, -cfg.MaxAimSpeed, cfg.MaxAimSpeed),
-            Math.Clamp((target.Target.Y - center.Y) / radius * cfg.AimStrength * 1.8, -cfg.MaxAimSpeed, cfg.MaxAimSpeed));
+            Math.Clamp((target.Target.X - center.X) / radius * gain, -cfg.MaxAimSpeed, cfg.MaxAimSpeed),
+            Math.Clamp((target.Target.Y - center.Y) / radius * gain, -cfg.MaxAimSpeed, cfg.MaxAimSpeed));
         // Strength controls correction; smoothness controls response time, independent of FPS.
         var responseSeconds = .02 + Math.Clamp(cfg.Smoothing,0,1) * .28;
         var alpha = cfg.Smoothing <= 0 ? 1 : 1-Math.Exp(-Math.Clamp(dt,.001,.25)/responseSeconds);

@@ -12,9 +12,9 @@
     <ApplicationIcon>Assets\ControllerLabPro.ico</ApplicationIcon>
     <Product>ControllerLab Pro</Product>
     <Description>Offline controller processing and local vision-assist laboratory.</Description>
-    <Version>1.0.3</Version>
-    <FileVersion>1.0.3.0</FileVersion>
-    <AssemblyVersion>1.0.3.0</AssemblyVersion>
+    <Version>1.0.4</Version>
+    <FileVersion>1.0.4.0</FileVersion>
+    <AssemblyVersion>1.0.4.0</AssemblyVersion>
   </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="Models/yolox_nano.onnx" />

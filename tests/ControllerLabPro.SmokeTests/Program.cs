@@ -9,6 +9,7 @@ var checks = new List<(string Name, Action Run)>
     ("Head/body aim-point mapping", TestAimPoints),
     ("Nearest-to-crosshair selection", TestNearestSelection),
     ("Maximum correction cap", TestCorrectionCap),
+    ("High strength improves small-target correction", TestStrongPull),
     ("Lost-target release", TestRelease),
     ("Smoothness is consistent across frame rates", TestTimedSmoothing),
     ("Visible-target correction converges in simulation", TestConvergence),
@@ -63,6 +64,25 @@ static void TestCorrectionCap()
     var cfg = Config(AimPoint.CenterMass); cfg.MaxAimSpeed = .08; cfg.Smoothing = 0;
     var correction = engine.Process(frame, cfg);
     Assert(Math.Abs(correction.X) <= .08001 && Math.Abs(correction.Y) <= .08001, "Correction exceeded configured maximum");
+}
+
+static void TestStrongPull()
+{
+    using var frame = new Bitmap(1000,1000);
+    // A tiny visible person, 20 pixels right of center; upper torso is on center Y.
+    using var detector = new FakeDetector([new(new RectangleF(216,193.6f,8,20),.9f,"person")]);
+    var cfg=Config(AimPoint.UpperTorso); cfg.FovRadius=.2;
+    Stick Run(double strength) {
+        cfg.AimStrength=strength;
+        return new VisionAimEngine(detector,new ProportionalTargetPointEstimator()).Process(frame,cfg);
+    }
+    var normal=Run(.65);var high=Run(1);
+    Assert(high.X>normal.X*6 && high.X>.7 && high.X<=1,"High strength barely corrects a small target near the crosshair");
+    Assert(Math.Abs(high.Y)<.00001,"Small-target coordinates or upper torso mapping shifted");
+    detector.Detections=[new(new RectangleF(316,193.6f,8,20),.9f,"person")];
+    Assert(Run(1).X==1,"Maximum strength cannot produce full-stick correction");
+    detector.Detections=[new(new RectangleF(196,193.6f,8,20),.9f,"person")];
+    Assert(Math.Abs(Run(1).X)<.00001,"Correction moves when the aim point is centered");
 }
 
 static void TestRelease()
@@ -330,3 +350,4 @@ sealed class FakeDetector(IReadOnlyList<RawDetection> detections) : IObjectDetec
     public IReadOnlyList<RawDetection> Detect(Bitmap frame, float threshold) => Detections.Where(x => x.Confidence >= threshold).ToList();
     public void Dispose() { }
 }
+
