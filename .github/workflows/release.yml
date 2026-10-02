@@ -80,7 +80,7 @@ jobs:
                 throw new Error(`Upload verification failed: ${name}`);
             }
             await github.rest.repos.updateRelease({...params, release_id: release.id, body, draft: false, make_latest: 'true'});
-            for (const oldTag of ['v1.0.0', 'v1.0.1', 'v1.0.2', 'v1.0.3']) {
+            for (const oldTag of ['v1.0.0', 'v1.0.1', 'v1.0.2', 'v1.0.3', 'v1.0.4']) {
               if (oldTag === tag) continue;
               try {
                 const old = (await github.rest.repos.getReleaseByTag({...params, tag: oldTag})).data;

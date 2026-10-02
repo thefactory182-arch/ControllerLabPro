@@ -27,6 +27,7 @@ public sealed class VisionSettings
     public double DetectionConfidence { get; set; }=.55;
     public double FovRadius { get; set; }=.20;
     public double AimStrength { get; set; }=.65;
+    public bool StrongTargetFollow { get; set; }
     public double Smoothing { get; set; }=.55;
     public double MaxAimSpeed { get; set; }=.5225;
     public int LockMilliseconds { get; set; }=300;

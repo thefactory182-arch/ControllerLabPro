@@ -10,6 +10,8 @@ var checks = new List<(string Name, Action Run)>
     ("Nearest-to-crosshair selection", TestNearestSelection),
     ("Maximum correction cap", TestCorrectionCap),
     ("High strength improves small-target correction", TestStrongPull),
+    ("Strong follow acquisition, reversal and missed detection", TestStrongFollow),
+    ("Strong follow converges and follows a moving target", TestStrongFollowLoop),
     ("Lost-target release", TestRelease),
     ("Smoothness is consistent across frame rates", TestTimedSmoothing),
     ("Visible-target correction converges in simulation", TestConvergence),
@@ -83,6 +85,50 @@ static void TestStrongPull()
     Assert(Run(1).X==1,"Maximum strength cannot produce full-stick correction");
     detector.Detections=[new(new RectangleF(196,193.6f,8,20),.9f,"person")];
     Assert(Math.Abs(Run(1).X)<.00001,"Correction moves when the aim point is centered");
+}
+
+static void TestStrongFollow()
+{
+    using var frame=new Bitmap(1000,1000);
+    using var detector=new FakeDetector([new(new RectangleF(202,193.6f,8,20),.9f,"person")]);
+    var cfg=Config(AimPoint.UpperTorso);cfg.FovRadius=.2;
+    var normal=new VisionAimEngine(detector,new ProportionalTargetPointEstimator()).Process(frame,cfg);
+    cfg.StrongTargetFollow=true;
+    var engine=new VisionAimEngine(detector,new ProportionalTargetPointEstimator());
+    var strong=engine.Process(frame,cfg,1d/60);
+    Assert(strong.X>normal.X*2 && strong.X<=1,"Strong follow barely improves near-center acquisition");
+    // Overlapping boxes retain the target while its aim point crosses the crosshair.
+    detector.Detections=[new(new RectangleF(180,140,40,200),.9f,"person")];
+    engine.Release();engine.Process(frame,cfg);
+    detector.Detections=[new(new RectangleF(182,140,40,200),.9f,"person")];cfg.Smoothing=.7;
+    Assert(engine.Process(frame,cfg).X>0,"Strong follow cannot start tracking");
+    detector.Detections=[new(new RectangleF(178,140,40,200),.9f,"person")];
+    Assert(engine.Process(frame,cfg).X<0,"Easing continues away after crossing target");
+    detector.Detections=[];
+    Assert(engine.Process(frame,cfg)==new Stick(),"Strong follow keeps moving on missed detection");
+    engine.Release();cfg.AimStrength=0;
+    detector.Detections=[new(new RectangleF(202,193.6f,8,20),.9f,"person")];
+    Assert(engine.Process(frame,cfg)==new Stick(),"Strong follow ignores zero strength");
+}
+
+static void TestStrongFollowLoop()
+{
+    foreach(var rate in new[]{60,120})
+    {
+        using var frame=new Bitmap(1000,1000);using var detector=new FakeDetector([]);
+        var engine=new VisionAimEngine(detector,new ProportionalTargetPointEstimator());
+        var cfg=Config(AimPoint.CenterMass);cfg.StrongTargetFollow=true;cfg.AimStrength=.9;cfg.Smoothing=.25;
+        var error=150f;var sumError=0d;
+        for(var i=0;i<rate*3;i++)
+        {
+            detector.Detections=[new(new RectangleF(450+error,400,100,200),.95f,"person")];
+            var correction=engine.Process(frame,cfg,1d/rate);
+            error-=(float)(correction.X*650/rate);
+            if(i>=rate) { error+=30f/rate; sumError+=Math.Abs(error); }
+            Assert(Math.Abs(correction.X)<=1,"Strong follow exceeded stick output bounds");
+        }
+        Assert(sumError/(rate*2)<5,"Strong follow fails to hold a moving target in simulation");
+    }
 }
 
 static void TestRelease()
@@ -216,7 +262,7 @@ static void TestDisplays()
     Assert(displays.Count>0&&displays.All(d=>d.Bounds.Width>0&&d.Bounds.Height>0),"No usable display found");
     Assert(new WindowCapture().Capture("missing-display") is null,"Missing display silently captured a different monitor");
     var path=Path.Combine(Path.GetTempPath(),Guid.NewGuid()+".json");
-    try{var cfg=new AppSettings();cfg.Vision.CaptureDisplay=displays[0].DeviceName;cfg.Save(path);Assert(AppSettings.Load(path).Vision.CaptureDisplay==displays[0].DeviceName,"Display choice did not persist");}
+    try{var cfg=new AppSettings();cfg.Vision.CaptureDisplay=displays[0].DeviceName;cfg.Vision.StrongTargetFollow=true;cfg.Save(path);var loaded=AppSettings.Load(path);Assert(loaded.Vision.CaptureDisplay==displays[0].DeviceName&&loaded.Vision.StrongTargetFollow,"Display choice or strong follow did not persist");}
     finally{File.Delete(path);}
 }
 
@@ -241,10 +287,13 @@ static void TestUi()
             }
             ((System.Windows.Controls.CheckBox)main.FindName("JitterEnabled")).IsChecked=true;
             ((System.Windows.Controls.CheckBox)main.FindName("TurboEnabled")).IsChecked=true;
+            ((System.Windows.Controls.CheckBox)main.FindName("StrongTargetFollow")).IsChecked=true;
             ((System.Windows.Controls.Slider)main.FindName("TurboHz")).Value=20;
             Invoke("ApplyControls");
             var cfg=(AppSettings)type.GetField("_runtimeCfg",flags)!.GetValue(main)!;
             Assert(cfg.Turbo.Enabled&&cfg.Turbo.FrequencyHz==20,"Turbo controls did not apply");
+            Assert(cfg.Vision.StrongTargetFollow,"Strong follow UI did not apply to runtime settings");
+            Invoke("RefreshLabels");
             type.GetField("_controllerRunning",flags)!.SetValue(main,true);
             var raw=new ControllerState(new(),new(.2,.1),1,0,new(){"LB","A"});
             Exception? inputFailure=null;

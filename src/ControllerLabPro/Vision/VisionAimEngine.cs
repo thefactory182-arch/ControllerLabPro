@@ -55,6 +55,7 @@ public sealed class VisionAimEngine(IObjectDetector detector, ITargetPointEstima
             _missedFrames++;
             if (_missedFrames >= cfg.ReleaseAfterMissedFrames || DateTime.UtcNow > _lockExpires) Release();
             LastDetections = candidates;
+            if (cfg.StrongTargetFollow) { _smoothed = new(); return _smoothed; }
             return EaseToZero(cfg.Smoothing);
         }
 
@@ -78,8 +79,22 @@ public sealed class VisionAimEngine(IObjectDetector detector, ITargetPointEstima
         var desired = new Stick(
             Math.Clamp((target.Target.X - center.X) / radius * gain, -cfg.MaxAimSpeed, cfg.MaxAimSpeed),
             Math.Clamp((target.Target.Y - center.Y) / radius * gain, -cfg.MaxAimSpeed, cfg.MaxAimSpeed));
+        if (cfg.StrongTargetFollow)
+        {
+            // Saturate quickly for acquisition, while retaining zero correction at the aim point.
+            var limit = Math.Min(Math.Clamp(cfg.MaxAimSpeed, 0, 1), strength);
+            desired = new Stick(
+                Math.Tanh((target.Target.X - center.X) / radius * 28) * limit,
+                Math.Tanh((target.Target.Y - center.Y) / radius * 28) * limit);
+            // Do not continue turning away after crossing the target due to accumulated easing.
+            _smoothed = new Stick(
+                desired.X * _smoothed.X <= 0 ? 0 : _smoothed.X,
+                desired.Y * _smoothed.Y <= 0 ? 0 : _smoothed.Y);
+        }
         // Strength controls correction; smoothness controls response time, independent of FPS.
-        var responseSeconds = .02 + Math.Clamp(cfg.Smoothing,0,1) * .28;
+        var responseSeconds = cfg.StrongTargetFollow
+            ? .005 + Math.Clamp(cfg.Smoothing,0,1) * .075
+            : .02 + Math.Clamp(cfg.Smoothing,0,1) * .28;
         var alpha = cfg.Smoothing <= 0 ? 1 : 1-Math.Exp(-Math.Clamp(dt,.001,.25)/responseSeconds);
         _smoothed = new Stick(_smoothed.X + (desired.X - _smoothed.X) * alpha, _smoothed.Y + (desired.Y - _smoothed.Y) * alpha);
         return _smoothed;
